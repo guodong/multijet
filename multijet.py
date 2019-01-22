@@ -12,6 +12,7 @@ from ryu.lib.packet import packet, udp, ethernet, ipv4
 
 lock = threading.Lock()
 
+initializer = False
 
 class Multijet(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
@@ -128,6 +129,7 @@ class Multijet(app_manager.RyuApp):
             data = data.replace('\n', '')  # remove the last \n
             action = data.split(':')[0]
             if action == 't':  # trigger verify
+                initializer = True
                 msg_to_send = {
                     'protocol': 100,
                     'property': 'reach:x',
@@ -164,6 +166,8 @@ class Multijet(app_manager.RyuApp):
             return
         payload = pkt.protocols[-1]
         print payload
+        if initializer:
+            return
         try:
             msg = json.loads(payload)
             changed = self.cps[int(msg['protocol'])].calc_property_space(in_port, msg['property'], msg['space'])
