@@ -42,9 +42,15 @@ header_map = {
 
 
 class Space:
-    def __init__(self, areas=[], match={}):
+    def __init__(self, areas=None, match=None):
+        if areas is None:
+            areas = []
         self.areas = areas
+
+        if match is None:
+            match = {}
         self.match = match
+
         if len(match) > 0:
             self.areas.append(self.build_space_for_match(match))
 

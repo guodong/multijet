@@ -1,5 +1,5 @@
 from core.space import Space
-import json
+import json, platform
 
 
 class ControlPlane:
@@ -8,6 +8,7 @@ class ControlPlane:
         self.rules = []
         self.frules = {}  # forward rules, indexed by port
         self.pm = {}  # property matrix, property=>(port, Space)
+        self.ecs = {}
 
     def add_rule(self, match, action):
         # check exists
@@ -84,6 +85,32 @@ class ControlPlane:
         result.sort()
         return result
 
+    # def init_ecs(self):
+    #     for rule in self.rules:
+    #         self.ecs.append({})
+
+    def calc_ecs(self, in_port, ecs):
+        changed = False
+        space = Space(areas=[], match={})
+        for forward_port in self.frules:
+            if forward_port == in_port:
+                space.plus(self.frules[forward_port])
+
+        for ec in ecs:
+            if json.dumps(ec['route'])[-1] == platform.node():
+                continue
+            s = Space(areas=ec['space'])
+            s.multiply(space)
+            if len(s.areas) == 0:
+                continue
+            changed = True
+            ec['route'].insert(0, platform.node())
+            self.ecs[json.dumps(ec['route'])] = s
+            # self.ecs.append({'space': s.areas, 'route': ec['route']})
+
+        self.dump()
+        return changed
+
     def dump(self):
         with open('/tmp/cp' + str(self.offset), 'w') as f:
             f.write("rules:\n")
@@ -103,3 +130,8 @@ class ControlPlane:
                     f.write(str(port))
                     for a in space.areas:
                         f.write(a)
+
+            f.write(str(len(self.ecs)))
+            for route in self.ecs:
+                f.write(route)
+                f.write('\n')

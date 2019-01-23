@@ -1,4 +1,4 @@
-import json, threading, time, socket
+import json, threading, time, socket, platform
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
@@ -24,6 +24,8 @@ class Multijet(app_manager.RyuApp):
             10: ControlPlane(10),  # sdn
             100: ControlPlane(100)  # ospf
         }
+
+        self.ecs = []
 
         # start trigger server
         t = threading.Thread(target=self.trigger_server)
@@ -131,9 +133,38 @@ class Multijet(app_manager.RyuApp):
             if action == 't':  # trigger verify
                 initializer = True
                 msg_to_send = {
+                    'type': 'pm',
                     'protocol': 100,
-                    'property': 'reach:x',
-                    'space': [''.rjust(336, '*')]
+                    'property': 'reach:h2',
+                    'space': self.cps[100].frules[1].areas
+                    # 'space': [''.rjust(336, '*')]
+                }
+                p = packet.Packet()
+                p.add_protocol(ethernet.ethernet())
+                ipheader = ipv4.ipv4(proto=17)
+                p.add_protocol(ipheader)
+                u = udp.udp(dst_port=9999)
+                u.serialize(json.dumps(msg_to_send), ipheader)
+                p.add_protocol(u)
+                p.add_protocol(json.dumps(msg_to_send))
+
+                ofp = self.dp.ofproto
+                parser = self.dp.ofproto_parser
+                p.serialize()
+                data = p.data
+                actions = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+                out = parser.OFPPacketOut(datapath=self.dp, buffer_id=ofp.OFP_NO_BUFFER, in_port=ofp.OFPP_CONTROLLER,
+                                          actions=actions, data=data)
+                self.dp.send_msg(out)
+            elif action == 'e':  # ec calc
+                # initializer = True
+                msg_to_send = {
+                    'type': 'ec',
+                    'node': platform.node(),
+                    'ecs': [{
+                        'space': [''.rjust(336, '*')],
+                        'route': [platform.node()]
+                    }]
                 }
                 p = packet.Packet()
                 p.add_protocol(ethernet.ethernet())
@@ -170,31 +201,63 @@ class Multijet(app_manager.RyuApp):
             return
         try:
             msg = json.loads(payload)
-            changed = self.cps[int(msg['protocol'])].calc_property_space(in_port, msg['property'], msg['space'])
-            if changed:
-                msg_to_send = {
-                    'protocol': msg['protocol'],
-                    'property': msg['property'],
-                    'space': self.cps[int(msg['protocol'])].get_property_areas(msg['property'])
-                }
-                print 'flooding'
-                p = packet.Packet()
-                p.add_protocol(ethernet.ethernet())
-                ipheader = ipv4.ipv4(proto=17)
-                p.add_protocol(ipheader)
-                u = udp.udp(dst_port=9999)
-                u.serialize(json.dumps(msg_to_send), ipheader)
-                p.add_protocol(u)
-                p.add_protocol(json.dumps(msg_to_send))
+            if msg['type'] == 'pm':
+                changed = self.cps[int(msg['protocol'])].calc_property_space(in_port, msg['property'], msg['space'])
+                if changed:
+                    msg_to_send = {
+                        'type': msg['type'],
+                        'protocol': msg['protocol'],
+                        'property': msg['property'],
+                        'space': self.cps[int(msg['protocol'])].get_property_areas(msg['property'])
+                    }
+                    print 'flooding'
+                    p = packet.Packet()
+                    p.add_protocol(ethernet.ethernet())
+                    ipheader = ipv4.ipv4(proto=17)
+                    p.add_protocol(ipheader)
+                    u = udp.udp(dst_port=9999)
+                    u.serialize(json.dumps(msg_to_send), ipheader)
+                    p.add_protocol(u)
+                    p.add_protocol(json.dumps(msg_to_send))
 
-                ofp = self.dp.ofproto
-                parser = self.dp.ofproto_parser
-                p.serialize()
-                data = p.data
-                actions = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
-                # out = parser.OFPPacketOut(datapath=self.dp, buffer_id=ofp.OFP_NO_BUFFER, in_port=ofp.OFPP_CONTROLLER, actions=actions, data=data)
-                out = parser.OFPPacketOut(datapath=self.dp, buffer_id=ofp.OFP_NO_BUFFER, in_port=in_port, actions=actions, data=data)
-                self.dp.send_msg(out)
+                    ofp = self.dp.ofproto
+                    parser = self.dp.ofproto_parser
+                    p.serialize()
+                    data = p.data
+                    actions = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+                    # out = parser.OFPPacketOut(datapath=self.dp, buffer_id=ofp.OFP_NO_BUFFER, in_port=ofp.OFPP_CONTROLLER, actions=actions, data=data)
+                    out = parser.OFPPacketOut(datapath=self.dp, buffer_id=ofp.OFP_NO_BUFFER, in_port=in_port, actions=actions, data=data)
+                    self.dp.send_msg(out)
+            elif msg['type'] == 'ec':
+                changed = self.cps[100].calc_ecs(in_port, msg['ecs'])
+                if changed:
+                    data = []
+                    for route, space in self.cps[100].ecs.items():
+                        data.append({'space': space.areas, 'route': json.loads(route)})
+
+                    msg_to_send = {
+                        'type': msg['type'],
+                        'ecs': data
+                    }
+                    print 'flooding ecs'
+                    p = packet.Packet()
+                    p.add_protocol(ethernet.ethernet())
+                    ipheader = ipv4.ipv4(proto=17)
+                    p.add_protocol(ipheader)
+                    u = udp.udp(dst_port=9999)
+                    u.serialize(json.dumps(msg_to_send), ipheader)
+                    p.add_protocol(u)
+                    p.add_protocol(json.dumps(msg_to_send))
+
+                    ofp = self.dp.ofproto
+                    parser = self.dp.ofproto_parser
+                    p.serialize()
+                    data = p.data
+                    actions = [parser.OFPActionOutput(ofp.OFPP_FLOOD)]
+                    # out = parser.OFPPacketOut(datapath=self.dp, buffer_id=ofp.OFP_NO_BUFFER, in_port=ofp.OFPP_CONTROLLER, actions=actions, data=data)
+                    out = parser.OFPPacketOut(datapath=self.dp, buffer_id=ofp.OFP_NO_BUFFER, in_port=in_port, actions=actions, data=data)
+                    self.dp.send_msg(out)
+
         except Exception as e:
             print e
 
